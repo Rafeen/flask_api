@@ -14,6 +14,11 @@ def create_table():
     db.create_all()
 
 
+@app.route("/")
+def hello():
+    return "Hello World!"
+
+
 @app.route('/signup', methods=['POST'])
 def create_user():  # put application's code here
 
