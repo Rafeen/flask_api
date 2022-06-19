@@ -1,10 +1,5 @@
 import unicodedata
 
-
-
-
-
-
 def isLengthOK(min, max, text):
     length = len(text)
 

@@ -1,21 +1,30 @@
-from flask import Flask, session, Response, jsonify, request
-import os
+from flask import Flask, jsonify, request
 from utils.utils import validate_username, validate_password
+from models.users import UserModel, db
 
-basedir = os.path.abspath(os.path.dirname(__file__))
 app = Flask(__name__)
 app.secret_key = "asdasd56465asd43123123446546^%*&%(&Asd7a987(&"
+app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///database.db'
+app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
+db.init_app(app=app)
+
+
+@app.before_first_request
+def create_table():
+    db.create_all()
 
 
 @app.route('/signup', methods=['POST'])
 def create_user():  # put application's code here
-    data = {
-        "user_id": "",
-        "nickname": "",
-        "comment": "",
-        "password": "",
-    }
-    json = request.json
+
+    json = request.get_json()
+
+    if "user_id" not in json or "password" not in json:
+        res = {
+            "message": "Account creation failed",
+            "cause": "required user_id and password"
+        }
+        return res, 400
 
     user_id = json["user_id"]
     password = json["password"]
@@ -25,7 +34,7 @@ def create_user():  # put application's code here
             "message": "Account creation failed",
             "cause": "required user_id and password"
         }
-        return Response(jsonify(res), status=400, mimetype='application/json')
+        return res, 400
 
     user_status = validate_username(user_id)
     password_status = validate_password(password)
@@ -35,55 +44,57 @@ def create_user():  # put application's code here
             "message": "Account creation failed",
             "cause": "user_id is not alphanumeric"
         }
-        return jsonify(res), 400
+        return res, 400
 
     if not user_status["char_type"]:
         res = {
             "message": "Account creation failed",
             "cause": "user_id is not half-width"
         }
-        return jsonify(res), 400
+        return res, 400
 
     if not user_status["length"]:
         res = {
             "message": "Account creation failed",
             "cause": "user_id length is not between 6 to 20"
         }
-        return jsonify(res), 400
+        return res, 400
 
     if not password_status["text_type"]:
         res = {
             "message": "Account creation failed",
             "cause": "password is not alphanumeric"
         }
-        return jsonify(res), 400
+        return res, 400
 
     if not password_status["char_type"]:
         res = {
             "message": "Account creation failed",
             "cause": "password is not half-width"
         }
-        return jsonify(res), 400
+        return res, 400
 
     if not password_status["length"]:
         res = {
             "message": "Account creation failed",
             "cause": "password length is not between 8 to 20"
         }
-        return jsonify(res), 400
+        return res, 400
 
-    if session.get(user_id) != None:
+    user = UserModel.query.filter_by(user_id=user_id).first()
+    if user:
         res = {
             "message": "Account creation failed",
             "cause": "already same user_id is used"
         }
         return jsonify(res), 400
 
-    data['user_id'] = user_id
-    data['password'] = password
-    session[user_id] = data
+    new_user = UserModel(user_id=user_id)
+    new_user.set_password(password)
+    db.session.add(new_user)
+    db.session.commit()
 
-    return jsonify(data), 200
+    return jsonify(new_user.serialize()), 200
 
 
 @app.route('/users/<user_id>', methods=['GET'])
@@ -95,26 +106,28 @@ def get_user(user_id):  # put application's code here
     if "username" not in request.authorization or "password" not in request.authorization:
         return jsonify({"message": "Authentication failed"}), 401
 
-    if request.authorization["username"] not in session:
+    auth_user = UserModel.query.filter_by(user_id=request.authorization["username"]).first()
+    if auth_user:
+        password = request.authorization["password"]
+        if not auth_user.check_password(password):
+            return jsonify({"message": "Authentication failed for invalid password"}), 401
+    else:
         return jsonify({"message": "Authentication failed  for invalid username"}), 401
 
-    if request.authorization["username"] in session:
-        password = session.get(request.authorization["username"])["password"]
-        if password != request.authorization["password"]:
-            return jsonify({"message": "Authentication failed for invalid password"}), 401
-
-    if session.get(user_id) == None:
-        return jsonify({"message": "no user found"}), 404
-    res = {
-        "message": "User Details by user_id",
-        "user": {
-            "user_id": session.get(user_id)["user_id"],
-            "nickname": session.get(user_id)["nickname"],
-            "comment": session.get(user_id)["comment"],
+    user = UserModel.query.filter_by(user_id=user_id).first()
+    if user:
+        res = {
+            "message": "User Details by user_id",
+            "user": {
+                "user_id": user.user_id,
+                "nickname": user.nickname,
+                "comment": user.comment,
+            }
         }
-    }
 
-    return jsonify(res), 200
+        return jsonify(res), 200
+
+    return jsonify({"message": "no user found"}), 404
 
 
 @app.route('/users/<user_id>', methods=['PATCH'])
@@ -125,30 +138,33 @@ def update_user(user_id):  # put application's code here
     if "username" not in request.authorization or "password" not in request.authorization:
         return jsonify({"message": "Authentication failed for invalid username or password"}), 401
 
-    if request.authorization["username"] in session:
-        password = session.get(request.authorization["username"])["password"]
-        if password != request.authorization["password"]:
-            return jsonify({"message": "Authentication failed"}), 401
+    auth_user = UserModel.query.filter_by(user_id=request.authorization["username"]).first()
+    if auth_user:
+        password = request.authorization["password"]
+        if not auth_user.check_password(password):
+            return jsonify({"message": "Authentication failed for invalid password"}), 401
+    else:
+        return jsonify({"message": "Authentication failed  for invalid username"}), 401
 
-    if session.get(user_id) == None:
-        return jsonify({"message": "no user found"}), 404
+    user = UserModel.query.filter_by(user_id=user_id).first()
+    if user:
+        if "nickname" in request.json:
+            user.nickname = request.json['nickname']
+        if "comment" in request.json:
+            user.comment = request.json['comment']
+        db.session.add(user)
+        db.session.commit()
+        res = {
+            "message": "updated user by user id",
 
-    data = session.get(user_id)
-    if "nickname" in request.json:
-        data["nickname"] = request.json['nickname']
-    if "comment" in request.json:
-        data["comment"] = request.json['comment']
-    session[user_id] = data
-    res = {
-        "message": "updated user by user id",
-
-        "recipe": {
-            "nickname": session.get(user_id)["nickname"],
-            "comment": session.get(user_id)["comment"],
+            "recipe": {
+                "nickname": user.nickname,
+                "comment": user.comment,
+            }
         }
-    }
+        return jsonify(res), 200
 
-    return jsonify(res), 200
+    return jsonify({"message": "no user found"}), 404
 
 
 @app.route('/close', methods=['POST'])
@@ -159,14 +175,21 @@ def delete_user():  # put application's code here
     if "username" not in request.authorization or "password" not in request.authorization:
         return jsonify({"message": "Authentication failed"}), 401
 
-    if request.authorization["username"] in session:
-        password = session.get(request.authorization["username"])["password"]
-        if password != request.authorization["password"]:
-            return jsonify({"message": "Authentication failed"}), 401
+    auth_user = UserModel.query.filter_by(user_id=request.authorization["username"]).first()
+    if auth_user:
+        password = request.authorization["password"]
+        if not auth_user.check_password(password):
+            return jsonify({"message": "Authentication failed for invalid password"}), 401
+    else:
+        return jsonify({"message": "Authentication failed  for invalid username"}), 401
 
-    session.pop(request.authorization["username"])
+    user = UserModel.query.filter_by(user_id=request.authorization["username"]).first()
+    if user:
+        db.session.delete(user)
+        db.session.commit()
+        return jsonify({"message": "user deleted"}), 200
 
-    return jsonify({"message": "user deleted"}), 200
+    return jsonify({"message": "no user found"}), 404
 
 
 if __name__ == '__main__':
