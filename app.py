@@ -16,7 +16,7 @@ def create_table():
 
 @app.route("/")
 def hello():
-    return "Hello World!"
+    return "Implemented new changes!"
 
 
 @app.route('/signup', methods=['POST'])
